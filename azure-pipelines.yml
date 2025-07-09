@@ -1,0 +1,114 @@
+trigger:
+  branches:
+    include:
+      - az-microservices-dataprocess
+    exclude:
+      - main
+
+pool:
+  vmImage: 'ubuntu-latest'
+
+variables:
+  - group: 'DockerCredentials'
+
+  - name: imageName
+    value: 'datapreparation'
+
+  - name: registryName
+    value: 'nameplateacrregistry-apbufcdcbyh5hpb8'
+
+  - name: resourceGroup
+    value: 'rg-storage-functionservices-shared-001'  # Replace with your actual Azure RG
+
+  - name: containerName
+    value: 'datapreparation-demo'  # Must match desired DNS label
+
+  - name: location
+    value: 'westeurope'
+
+  - name: fullImageName
+    value: '$(registryName).azurecr.io/$(imageName):latest'
+
+  - name: dockerfilePath
+    value: '$(System.DefaultWorkingDirectory)/NamePlateDataProcess/DataPreparation/Dockerfile'
+
+  - name: buildContext
+    value: '$(System.DefaultWorkingDirectory)/NamePlateDataProcess'
+
+stages:
+- stage: BuildAndPush
+  displayName: 'Build and Push Docker Image'
+  jobs:
+    - job: BuildPush
+      steps:
+        - checkout: self
+
+        - script: |
+            echo "$DOCKER_PASSWORD" | docker login $(registryName).azurecr.io -u "$DOCKER_USERNAME" --password-stdin
+          displayName: 'Docker Login'
+          env:
+            DOCKER_USERNAME: $(DOCKER_USERNAME)
+            DOCKER_PASSWORD: $(DOCKER_PASSWORD)
+
+        - script: |
+            docker build -t "$(imageName):latest" -f "$(dockerfilePath)" "$(buildContext)"
+          displayName: 'Build Docker Image'
+
+        - script: |
+            docker tag "$(imageName):latest" "$(fullImageName)"
+          displayName: 'Tag Docker Image'
+
+        - script: |
+            docker push "$(fullImageName)"
+          displayName: 'Push Docker Image'
+
+- stage: DeployToACI
+  displayName: 'Deploy to ACI using Terraform'
+  dependsOn: BuildAndPush
+  jobs:
+    - job: TerraformDeploy
+      displayName: 'Terraform Apply'
+      steps:
+        - checkout: self
+
+        - task: TerraformInstaller@1
+          inputs:
+            terraformVersion: '1.4.6'
+
+        - task: AzureCLI@2
+          displayName: 'Terraform Init + Plan + Apply'
+          inputs:
+            azureSubscription: 'msa-000996-workbench-dev'
+            scriptType: bash
+            scriptLocation: inlineScript
+            workingDirectory: 'NamePlateDataProcess/DataPreparation/terraform'
+            inlineScript: |
+              echo "Current Directory: $(pwd)"
+              ls -la
+
+              echo "Running terraform init"
+              terraform init
+
+              echo "Running terraform plan"
+              terraform plan \
+                -var="container_name=$(containerName)" \
+                -var="resource_group=$(resourceGroup)" \
+                -var="location=$(location)" \
+                -var="image_name=$(fullImageName)" \
+                -var="registry_server=$(registryName).azurecr.io" \
+                -var="docker_username=${DOCKER_USERNAME}" \
+                -var="docker_password=${DOCKER_PASSWORD}"
+
+              echo "Running terraform apply"
+              terraform apply -auto-approve \
+                -var="container_name=$(containerName)" \
+                -var="resource_group=$(resourceGroup)" \
+                -var="location=$(location)" \
+                -var="image_name=$(fullImageName)" \
+                -var="registry_server=$(registryName).azurecr.io" \
+                -var="docker_username=$(DOCKER_USERNAME)" \
+                -var="docker_password=$(DOCKER_PASSWORD)"
+
+          env:
+            DOCKER_USERNAME: $(DOCKER_USERNAME)
+            DOCKER_PASSWORD: $(DOCKER_PASSWORD)

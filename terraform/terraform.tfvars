@@ -1,0 +1,5 @@
+resource_group     = "rg-storage-functionservices-shared-001"
+location           = "westeurope"
+container_name     = "datapreparation-demo"
+image_name         = "nameplateacrregistry-apbufcdcbyh5hpb8.azurecr.io/datapreparation:latest"
+registry_server    = "nameplateacrregistry-apbufcdcbyh5hpb8.azurecr.io"
